@@ -102,12 +102,12 @@ def build_arrears_detection_flow() -> StateGraph:
 
     async def calculate_breach(state: WorkflowState) -> WorkflowState:
         """Calculate breach status."""
-        tenancy_id = state.get("tenancy_id", "")
+        tenancy_id = state.get("tenancy_id") or ""
         context = state["context"]
 
         from mcp.schemas.tools import CalculateBreachInput
 
-        input_data = CalculateBreachInput(tenancy_id=tenancy_id)
+        input_data = CalculateBreachInput(tenancy_id=tenancy_id if tenancy_id else "unknown")
         output = await calculate_breach_status(input_data, context)
         state["step_results"]["breach_status"] = output.model_dump()
         return state
@@ -192,7 +192,7 @@ def build_compliance_audit_flow() -> StateGraph:
     async def audit_compliance(state: WorkflowState) -> WorkflowState:
         """Audit compliance based on extracted dates."""
         extracted_dates = state["step_results"].get("extracted_dates", [])
-        compliance_issues = []
+        compliance_issues: list[str] = []
         for date_info in extracted_dates:
             date_value_str = date_info.get("date_value")
             if date_value_str:

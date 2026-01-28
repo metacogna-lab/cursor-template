@@ -30,13 +30,7 @@ class PolicyGateway:
         "archive_listing",
     ]
 
-    # Mutation tools (for audit logging)
-    MUTATION_TOOLS: List[str] = [
-        "prepare_breach_notice",
-        "archive_listing",
-    ]
-
-    # Tools that are mutation/high-risk (Tier C)
+    # Mutation tools (for audit logging) - Tier C high-risk
     MUTATION_TOOLS: List[str] = [
         "prepare_breach_notice",
         "archive_listing",
