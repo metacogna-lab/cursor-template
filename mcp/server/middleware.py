@@ -9,15 +9,14 @@ from fastapi.responses import JSONResponse
 from opentelemetry import trace
 
 from mcp.config import settings
-from mcp.schemas.base import RequestContext
 
 tracer = trace.get_tracer(__name__)
 
 
 async def authentication_middleware(request: Request, call_next: Callable) -> Response:
     """Middleware to authenticate requests via bearer token."""
-    # Skip auth for health/version endpoints
-    if request.url.path in ["/healthz", "/version", "/docs", "/openapi.json", "/metrics"]:
+    # Skip auth for health/version/docs endpoints
+    if request.url.path in ["/healthz", "/ready", "/version", "/docs", "/openapi.json", "/metrics"]:
         return await call_next(request)
 
     # Check bearer token
@@ -52,14 +51,15 @@ async def observability_middleware(request: Request, call_next: Callable) -> Res
     """Middleware for observability (tracing, timing)."""
     start_time = time.time()
 
+    # Get correlation_id (set by request_id_middleware)
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+
     # Create trace span if OpenTelemetry enabled
     if settings.opentelemetry_enabled:
-        with tracer.start_as_current_span(
-            f"{request.method} {request.url.path}"
-        ) as span:
+        with tracer.start_as_current_span(f"{request.method} {request.url.path}") as span:
             span.set_attribute("http.method", request.method)
             span.set_attribute("http.url", str(request.url))
-            span.set_attribute("correlation_id", request.state.correlation_id)
+            span.set_attribute("correlation_id", correlation_id)
 
             response = await call_next(request)
 

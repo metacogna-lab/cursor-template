@@ -1,13 +1,10 @@
 """LangGraph workflow implementations."""
 
-import asyncio
-from datetime import datetime
 from typing import Any, Dict, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from mcp.schemas.base import RequestContext
-from mcp.tools import get_tool_registry
 from mcp.tools.implementations import (
     analyze_open_home_feedback,
     calculate_breach_status,
@@ -105,12 +102,12 @@ def build_arrears_detection_flow() -> StateGraph:
 
     async def calculate_breach(state: WorkflowState) -> WorkflowState:
         """Calculate breach status."""
-        tenancy_id = state.get("tenancy_id", "")
+        tenancy_id = state.get("tenancy_id") or ""
         context = state["context"]
 
         from mcp.schemas.tools import CalculateBreachInput
 
-        input_data = CalculateBreachInput(tenancy_id=tenancy_id)
+        input_data = CalculateBreachInput(tenancy_id=tenancy_id if tenancy_id else "unknown")
         output = await calculate_breach_status(input_data, context)
         state["step_results"]["breach_status"] = output.model_dump()
         return state
@@ -156,7 +153,6 @@ def build_compliance_audit_flow() -> StateGraph:
 
     async def fetch_documents(state: WorkflowState) -> WorkflowState:
         """Fetch property documents (resource)."""
-        property_id = state["property_id"]
         # In real implementation, would call resource handler
         state["step_results"]["documents"] = [
             {"document_id": "doc_001", "url": "vault://documents/doc_001.pdf"},
@@ -196,9 +192,7 @@ def build_compliance_audit_flow() -> StateGraph:
     async def audit_compliance(state: WorkflowState) -> WorkflowState:
         """Audit compliance based on extracted dates."""
         extracted_dates = state["step_results"].get("extracted_dates", [])
-        now = datetime.utcnow()
-
-        compliance_issues = []
+        compliance_issues: list[str] = []
         for date_info in extracted_dates:
             date_value_str = date_info.get("date_value")
             if date_value_str:

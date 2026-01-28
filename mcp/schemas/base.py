@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -31,8 +31,8 @@ class BaseRequest(BaseModel):
     context: RequestContext
     correlation_id: str = Field(default_factory=lambda: str(uuid4()))
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "context": {
                     "user_id": "user_123",
@@ -43,6 +43,7 @@ class BaseRequest(BaseModel):
                 "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
             }
         }
+    }
 
 
 class BaseResponse(BaseModel):
@@ -50,7 +51,7 @@ class BaseResponse(BaseModel):
 
     success: bool
     correlation_id: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class ErrorResponse(BaseResponse):
@@ -93,4 +94,4 @@ class AgentManifest(BaseModel):
     rbac_policy_level: str = Field(..., description="Low, Medium, or High")
     workflow_version: Optional[str] = Field(None, description="Workflow version if LangGraph-based")
     prompt_hash: Optional[str] = Field(None, description="SHA256 hash of static prompts")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)

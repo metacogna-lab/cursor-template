@@ -3,7 +3,7 @@
 import asyncio
 import re
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Dict
 
 from mcp.schemas.tools import (
     AnalyzeFeedbackInput,
@@ -16,6 +16,8 @@ from mcp.schemas.tools import (
     GenerateVendorReportOutput,
     OCRDocumentInput,
     OCRDocumentOutput,
+    PrepareBreachNoticeInput,
+    PrepareBreachNoticeOutput,
     SentimentCategory,
 )
 from mcp.schemas.base import RequestContext
@@ -31,15 +33,22 @@ MOCK_PROPERTY_FEEDBACK = {
     ]
 }
 
-MOCK_LEDGER_DATA = {
-    "tenancy_001": {
-        "current_balance": -150.0,  # Negative = owed
-        "last_payment_date": datetime.utcnow() - timedelta(days=45),
-        "lease_start": datetime.utcnow() - timedelta(days=365),
-        "lease_end": datetime.utcnow() + timedelta(days=180),
-        "rent_amount": 500.0,
+
+def _get_mock_ledger_data():
+    """Generate mock ledger data with current timestamps."""
+    now = datetime.now()
+    return {
+        "tenancy_001": {
+            "current_balance": -150.0,  # Negative = owed
+            "last_payment_date": now - timedelta(days=45),
+            "lease_start": now - timedelta(days=365),
+            "lease_end": now + timedelta(days=180),
+            "rent_amount": 500.0,
+        }
     }
-}
+
+
+MOCK_LEDGER_DATA = _get_mock_ledger_data()
 
 
 async def analyze_open_home_feedback(
@@ -97,12 +106,11 @@ async def calculate_breach_status(
     ledger = MOCK_LEDGER_DATA.get(input_data.tenancy_id, {})
     current_balance = ledger.get("current_balance", 0.0)
     last_payment = ledger.get("last_payment_date")
-    rent_amount = ledger.get("rent_amount", 0.0)
 
     # Calculate days overdue
     days_overdue = 0
     if last_payment:
-        days_since_payment = (datetime.utcnow() - last_payment).days
+        days_since_payment = (datetime.now() - last_payment).days
         # Assume rent is due monthly, so if > 30 days, it's overdue
         if days_since_payment > 30:
             days_overdue = days_since_payment - 30
@@ -140,9 +148,7 @@ async def calculate_breach_status(
     )
 
 
-async def ocr_document(
-    input_data: OCRDocumentInput, context: RequestContext
-) -> OCRDocumentOutput:
+async def ocr_document(input_data: OCRDocumentInput, context: RequestContext) -> OCRDocumentOutput:
     """
     Extract text from uploaded documents using OCR.
 
@@ -189,7 +195,10 @@ async def extract_expiry_date(
 
     # Date patterns
     date_patterns = [
-        (r"expir(?:y|ation|es)\s*(?:date|on)?\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", "expiry_date"),
+        (
+            r"expir(?:y|ation|es)\s*(?:date|on)?\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+            "expiry_date",
+        ),
         (r"valid\s+until\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", "valid_until"),
         (r"end\s+date\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", "end_date"),
     ]
@@ -227,9 +236,7 @@ async def extract_expiry_date(
     from mcp.schemas.tools import ExtractedDate
 
     return ExtractExpiryOutput(
-        extracted_dates=[
-            ExtractedDate(**d) for d in extracted_dates if "date_value" in d
-        ]
+        extracted_dates=[ExtractedDate(**d) for d in extracted_dates if "date_value" in d]
     )
 
 
@@ -252,7 +259,9 @@ async def generate_vendor_report(
     feedback_summary = {
         "total_feedback": total_count,
         "positive_sentiment": positive_count,
-        "positive_percentage": round((positive_count / total_count * 100) if total_count > 0 else 0, 2),
+        "positive_percentage": round(
+            (positive_count / total_count * 100) if total_count > 0 else 0, 2
+        ),
     }
 
     recommendations = []
@@ -263,7 +272,7 @@ async def generate_vendor_report(
 
     return GenerateVendorReportOutput(
         property_id=input_data.property_id,
-        report_date=datetime.utcnow(),
+        report_date=datetime.now(),
         feedback_summary=feedback_summary,
         market_trends={"avg_days_on_market": 45, "price_trend": "stable"},
         recommendations=recommendations,
@@ -271,8 +280,8 @@ async def generate_vendor_report(
 
 
 async def prepare_breach_notice(
-    input_data: Dict[str, Any], context: RequestContext
-) -> Dict[str, Any]:
+    input_data: PrepareBreachNoticeInput, context: RequestContext
+) -> PrepareBreachNoticeOutput:
     """
     Prepare breach notice document (draft-only in MVP).
 
@@ -282,20 +291,57 @@ async def prepare_breach_notice(
     # Simulate latency
     await asyncio.sleep(0.2)
 
-    tenancy_id = input_data.get("tenancy_id", "")
-    breach_details = input_data.get("breach_details", {})
+    # Get breach status for context
+    from mcp.tools.implementations import calculate_breach_status
+    from mcp.schemas.tools import CalculateBreachInput
 
-    # Generate draft breach notice
-    draft_notice = {
-        "notice_id": f"BN-{tenancy_id}-{datetime.utcnow().strftime('%Y%m%d')}",
-        "tenancy_id": tenancy_id,
-        "issue_date": datetime.utcnow().isoformat(),
-        "breach_type": breach_details.get("breach_type", "rent_arrears"),
-        "breach_description": breach_details.get("description", "Rent arrears"),
-        "remedy_period_days": 14,
-        "status": "draft",  # Always draft in MVP
-        "requires_hitl_approval": True,
-        "note": "This is a draft notice. HITL approval required before sending.",
+    breach_status = await calculate_breach_status(
+        CalculateBreachInput(tenancy_id=input_data.tenancy_id), context
+    )
+
+    # Generate draft breach notice content
+    notice_id = f"notice_{input_data.tenancy_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    breach_type_descriptions = {
+        "rent_arrears": "Rent arrears - failure to pay rent as required by the lease agreement",
+        "lease_violation": "Lease violation - breach of terms and conditions of the lease",
+        "property_damage": "Property damage - damage to the property beyond fair wear and tear",
     }
 
-    return draft_notice
+    draft_content = f"""
+DRAFT BREACH NOTICE - NOT FOR DISTRIBUTION
+
+Notice ID: {notice_id}
+Tenancy ID: {input_data.tenancy_id}
+Date: {datetime.now().strftime('%Y-%m-%d')}
+
+BREACH TYPE: {input_data.breach_type.upper().replace('_', ' ')}
+
+DESCRIPTION:
+{breach_type_descriptions.get(input_data.breach_type, 'Breach of lease agreement')}
+
+BREACH STATUS:
+- Risk Level: {breach_status.breach_risk.level}
+- Legal Status: {breach_status.breach_risk.breach_legal_status}
+- Days Overdue: {breach_status.breach_risk.days_overdue or 'N/A'}
+- Current Balance: ${breach_status.current_balance or 0:.2f}
+
+REMEDY PERIOD:
+You have 14 days from the date of this notice to remedy the breach.
+
+CONSEQUENCES:
+Failure to remedy the breach within the specified period may result in termination of the lease agreement and legal action.
+
+---
+THIS IS A DRAFT NOTICE. HITL APPROVAL REQUIRED BEFORE SENDING.
+Status: DRAFT ONLY - NOT SENT
+"""
+
+    return PrepareBreachNoticeOutput(
+        notice_id=notice_id,
+        tenancy_id=input_data.tenancy_id,
+        breach_type=input_data.breach_type,
+        draft_content=draft_content.strip(),
+        status="draft",
+        created_at=datetime.now(),
+    )

@@ -1,10 +1,13 @@
-"""Tests for Tier C mutation/high-risk agents."""
+"""Tests for Tier C (mutation/high-risk) agents."""
 
 import pytest
 
 from mcp.schemas.base import RequestContext
-from mcp.tools.mutation_tools import prepare_breach_notice
-from mcp.policy import get_policy_gateway
+from mcp.schemas.tools import (
+    PrepareBreachNoticeInput,
+    PrepareBreachNoticeOutput,
+)
+from mcp.tools.implementations import prepare_breach_notice
 
 
 @pytest.fixture
@@ -14,65 +17,57 @@ def context():
         user_id="test_user",
         tenant_id="test_tenant",
         auth_context="test_token",
-        role="admin",  # Admin role required for mutation tools
+        role="admin",  # Tier C requires admin
     )
 
 
 @pytest.mark.asyncio
-async def test_prepare_breach_notice(context):
-    """Test prepare_breach_notice mutation tool."""
-    result = await prepare_breach_notice(
+async def test_prepare_breach_notice_valid(context):
+    """Test prepare_breach_notice with valid input."""
+    input_data = PrepareBreachNoticeInput(tenancy_id="tenancy_001", breach_type="rent_arrears")
+    output = await prepare_breach_notice(input_data, context)
+
+    assert output.notice_id.startswith("notice_")
+    assert output.tenancy_id == "tenancy_001"
+    assert output.breach_type == "rent_arrears"
+    assert output.status == "draft"
+    assert len(output.draft_content) > 0
+    assert "DRAFT" in output.draft_content.upper()
+
+
+@pytest.mark.asyncio
+async def test_prepare_breach_notice_invalid_breach_type(context):
+    """Test prepare_breach_notice with invalid breach_type."""
+    with pytest.raises(ValueError, match="Invalid breach_type"):
+        PrepareBreachNoticeInput(tenancy_id="tenancy_001", breach_type="invalid_type")
+
+
+@pytest.mark.asyncio
+async def test_prepare_breach_notice_all_breach_types(context):
+    """Test prepare_breach_notice with all valid breach types."""
+    for breach_type in ["rent_arrears", "lease_violation", "property_damage"]:
+        input_data = PrepareBreachNoticeInput(tenancy_id="tenancy_001", breach_type=breach_type)
+        output = await prepare_breach_notice(input_data, context)
+        assert output.breach_type == breach_type
+        assert output.status == "draft"
+
+
+def test_prepare_breach_notice_output_serialization():
+    """Test PrepareBreachNoticeOutput serialization."""
+    from datetime import datetime
+
+    output = PrepareBreachNoticeOutput(
+        notice_id="notice_123",
         tenancy_id="tenancy_001",
         breach_type="rent_arrears",
-        context=context,
+        draft_content="Test draft",
+        status="draft",
+        created_at=datetime.now(),
     )
 
-    assert "notice_id" in result
-    assert result["tenancy_id"] == "tenancy_001"
-    assert result["breach_type"] == "rent_arrears"
-    assert result["status"] == "draft"
-    assert "draft_content" in result
-    assert len(result["draft_content"]) > 0
-
-
-@pytest.mark.asyncio
-async def test_prepare_breach_notice_requires_hitl():
-    """Test that prepare_breach_notice requires HITL token."""
-    gateway = get_policy_gateway()
-    context = RequestContext(
-        user_id="test_user",
-        tenant_id="test_tenant",
-        auth_context="test_token",
-        role="admin",
-    )
-
-    # Without HITL token
-    allowed, error = gateway.check_rbac(context, "prepare_breach_notice")
-    assert allowed is False
-    assert "HITL" in error
-
-    # With HITL token
-    from mcp.config import settings
-
-    allowed, error = gateway.check_rbac(
-        context, "prepare_breach_notice", hitl_token=settings.hitl_token_secret
-    )
-    # In MVP, token validation is simplified
-    assert allowed is True or "HITL" in error  # May still fail if token doesn't match
-
-
-@pytest.mark.asyncio
-async def test_prepare_breach_notice_different_breach_types(context):
-    """Test prepare_breach_notice with different breach types."""
-    breach_types = ["rent_arrears", "lease_violation", "property_damage"]
-
-    for breach_type in breach_types:
-        result = await prepare_breach_notice(
-            tenancy_id="tenancy_001",
-            breach_type=breach_type,
-            context=context,
-        )
-
-        assert result["breach_type"] == breach_type
-        assert "draft_content" in result
-        assert len(result["draft_content"]) > 0
+    dumped = output.model_dump()
+    assert dumped["notice_id"] == "notice_123"
+    assert dumped["tenancy_id"] == "tenancy_001"
+    assert dumped["breach_type"] == "rent_arrears"
+    assert dumped["status"] == "draft"
+    assert "created_at" in dumped

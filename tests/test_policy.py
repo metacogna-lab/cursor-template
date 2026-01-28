@@ -1,7 +1,5 @@
 """Tests for policy gateway."""
 
-import pytest
-
 from mcp.policy import get_policy_gateway
 from mcp.schemas.base import RequestContext
 

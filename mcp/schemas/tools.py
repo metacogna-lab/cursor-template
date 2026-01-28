@@ -20,7 +20,9 @@ class AnalyzeFeedbackInput(VersionedSchema):
     def validate_property_id(cls, v: str) -> str:
         """Validate property ID format."""
         if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-            raise ValueError("Property ID must contain only alphanumeric characters, hyphens, or underscores")
+            raise ValueError(
+                "Property ID must contain only alphanumeric characters, hyphens, or underscores"
+            )
         return v
 
 
@@ -53,7 +55,9 @@ class CalculateBreachInput(VersionedSchema):
     def validate_tenancy_id(cls, v: str) -> str:
         """Validate tenancy ID format."""
         if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-            raise ValueError("Tenancy ID must contain only alphanumeric characters, hyphens, or underscores")
+            raise ValueError(
+                "Tenancy ID must contain only alphanumeric characters, hyphens, or underscores"
+            )
         return v
 
 
@@ -104,7 +108,9 @@ class OCRDocumentOutput(VersionedSchema):
 class ExtractExpiryInput(VersionedSchema):
     """Input schema for extract_expiry_date tool."""
 
-    text: str = Field(..., min_length=10, max_length=10000, description="Text to extract dates from")
+    text: str = Field(
+        ..., min_length=10, max_length=10000, description="Text to extract dates from"
+    )
     version: str = "v1"
 
 
@@ -134,7 +140,9 @@ class GenerateVendorReportInput(VersionedSchema):
     def validate_property_id(cls, v: str) -> str:
         """Validate property ID format."""
         if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-            raise ValueError("Property ID must contain only alphanumeric characters, hyphens, or underscores")
+            raise ValueError(
+                "Property ID must contain only alphanumeric characters, hyphens, or underscores"
+            )
         return v
 
 
@@ -150,31 +158,42 @@ class GenerateVendorReportOutput(VersionedSchema):
 
 
 class PrepareBreachNoticeInput(VersionedSchema):
-    """Input schema for prepare_breach_notice tool (Tier C - High Risk)."""
+    """Input schema for prepare_breach_notice tool (Tier C - HITL required)."""
 
     tenancy_id: str = Field(..., min_length=1, max_length=100, description="Tenancy identifier")
-    breach_details: dict = Field(..., description="Breach details")
+    breach_type: str = Field(
+        ...,
+        description="Type of breach: rent_arrears, lease_violation, or property_damage",
+    )
     version: str = "v1"
+
+    @field_validator("breach_type")
+    @classmethod
+    def validate_breach_type(cls, v: str) -> str:
+        """Validate breach type."""
+        valid_types = ["rent_arrears", "lease_violation", "property_damage"]
+        if v not in valid_types:
+            raise ValueError(f"Invalid breach_type. Must be one of: {valid_types}")
+        return v
 
     @field_validator("tenancy_id")
     @classmethod
     def validate_tenancy_id(cls, v: str) -> str:
         """Validate tenancy ID format."""
         if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-            raise ValueError("Tenancy ID must contain only alphanumeric characters, hyphens, or underscores")
+            raise ValueError(
+                "Tenancy ID must contain only alphanumeric characters, hyphens, or underscores"
+            )
         return v
 
 
 class PrepareBreachNoticeOutput(VersionedSchema):
     """Output schema for prepare_breach_notice tool."""
 
-    notice_id: str
+    notice_id: str = Field(..., description="Unique notice identifier")
     tenancy_id: str
-    issue_date: str
     breach_type: str
-    breach_description: str
-    remedy_period_days: int
-    status: str = Field(..., description="Always 'draft' in MVP")
-    requires_hitl_approval: bool
-    note: str
+    draft_content: str = Field(..., description="Draft breach notice content (MVP: draft-only)")
+    status: str = Field(default="draft", description="Status: draft or pending_approval")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=None))
     version: str = "v1"

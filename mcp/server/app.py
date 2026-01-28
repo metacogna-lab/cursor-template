@@ -1,13 +1,11 @@
 """FastAPI application factory."""
 
-import json
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from mcp.config import settings
 from mcp.policy import get_policy_gateway
@@ -19,7 +17,6 @@ from mcp.resources.implementations import (
     get_property_feedback_resource,
 )
 from mcp.schemas.base import (
-    ErrorResponse,
     RequestContext,
     ToolExecutionRequest,
     ToolExecutionResponse,
@@ -37,6 +34,7 @@ from mcp.tools.implementations import (
     extract_expiry_date,
     generate_vendor_report,
     ocr_document,
+    prepare_breach_notice,
 )
 
 
@@ -44,27 +42,15 @@ from mcp.tools.implementations import (
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup/shutdown."""
     # Startup: Register tools and resources
-    registry = get_tool_registry()
-
     # Register tools
     register_tool("analyze_open_home_feedback", analyze_open_home_feedback)
     register_tool("calculate_breach_status", calculate_breach_status)
     register_tool("ocr_document", ocr_document)
     register_tool("extract_expiry_date", extract_expiry_date)
     register_tool("generate_vendor_report", generate_vendor_report)
-
-    # Register Tier C (mutation/high-risk) tools
-    from mcp.tools.implementations import prepare_breach_notice
-
-    register_tool("prepare_breach_notice", prepare_breach_notice)
-
-    # Register mutation tools (Tier C)
-    from mcp.tools.mutation_tools import prepare_breach_notice
-
-    register_tool("prepare_breach_notice", prepare_breach_notice)
+    register_tool("prepare_breach_notice", prepare_breach_notice)  # Tier C - HITL required
 
     # Register resources
-    resource_registry = get_resource_registry()
     register_resource(
         "vault://properties/{id}/details",
         lambda property_id, context: get_property_details_resource(property_id, context),
@@ -97,21 +83,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     register_tier_c_agents()
 
-    # Register mutation tools
-    from mcp.tools.mutation_tools import prepare_breach_notice
-
-    register_tool("prepare_breach_notice", prepare_breach_notice)
-
-    # Register Tier C agents
-    from mcp.agents.tier_c_agents import register_tier_c_agents
-
-    register_tier_c_agents()
-
-    # Register Tier C agents
-    from mcp.agents.tier_c_agents import register_tier_c_agents
-
-    register_tier_c_agents()
-
     # Register workflows
     from mcp.langgraphs import register_workflow
     from mcp.langgraphs.executor import get_workflow_executor
@@ -136,11 +107,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Add middleware (order matters)
-    app.middleware("http")(request_id_middleware)
-    app.middleware("http")(authentication_middleware)
+    # Add middleware (order matters - runs in REVERSE order of registration)
+    # So we want: request_id -> auth -> observability (for actual request flow)
+    # Register observability first, then auth, then request_id
     if settings.opentelemetry_enabled:
         app.middleware("http")(observability_middleware)
+    app.middleware("http")(authentication_middleware)
+    app.middleware("http")(request_id_middleware)
 
     # CORS
     app.add_middleware(
@@ -151,11 +124,45 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Health check
+    # Health check (liveness probe)
     @app.get("/healthz")
     async def health_check():
-        """Health check endpoint."""
+        """Liveness health check endpoint."""
         return {"status": "healthy", "version": "0.1.0"}
+
+    # Readiness check (readiness probe)
+    @app.get("/ready")
+    async def readiness_check():
+        """Readiness check - verifies all dependencies are available."""
+        checks = {
+            "database": False,
+            "tools_registered": False,
+            "resources_registered": False,
+        }
+
+        # Check database connectivity
+        try:
+            db = get_db()
+            with db.get_connection() as conn:
+                conn.execute("SELECT 1")
+            checks["database"] = True
+        except Exception:
+            pass
+
+        # Check tools are registered
+        tool_registry = get_tool_registry()
+        checks["tools_registered"] = len(tool_registry._tools) > 0
+
+        # Check resources are registered
+        resource_registry = get_resource_registry()
+        checks["resources_registered"] = len(resource_registry.list_resources()) > 0
+
+        all_ready = all(checks.values())
+        return {
+            "status": "ready" if all_ready else "not_ready",
+            "checks": checks,
+            "version": "0.1.0",
+        }
 
     # Version endpoint
     @app.get("/version")
@@ -177,15 +184,16 @@ def create_app() -> FastAPI:
     @app.post(f"/{settings.mcp_api_version}/tools/{{tool_name}}")
     async def execute_tool(
         tool_name: str,
-        request: ToolExecutionRequest,
+        tool_request: ToolExecutionRequest,
+        http_request: Request,
         hitl_token: str | None = Header(None, alias="X-HITL-Token"),
     ):
         """Execute a tool."""
         import time
 
         start_time = time.time()
-        correlation_id = request.correlation_id
-        context = request.context
+        correlation_id = tool_request.correlation_id
+        context = tool_request.context
 
         # Validate request context
         policy_gateway = get_policy_gateway()
@@ -238,32 +246,18 @@ def create_app() -> FastAPI:
                 "ocr_document": OCRDocumentInput,
                 "extract_expiry_date": ExtractExpiryInput,
                 "generate_vendor_report": GenerateVendorReportInput,
-                "prepare_breach_notice": None,  # Custom input class
+                "prepare_breach_notice": PrepareBreachNoticeInput,
             }
 
             schema_class = input_schema_map.get(tool_name)
-            if schema_class is None and tool_name != "prepare_breach_notice":
+            if not schema_class:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Unknown tool schema for '{tool_name}'",
                 )
 
-            # Handle mutation tools with custom input classes
-            if tool_name == "prepare_breach_notice":
-                from mcp.tools.mutation_tools import PrepareBreachNoticeInput
-
-                tool_input = PrepareBreachNoticeInput(
-                    tenancy_id=request.input_data["tenancy_id"],
-                    breach_reason=request.input_data["breach_reason"],
-                )
-            else:
-                # Special handling for prepare_breach_notice (takes dict input)
-            if tool_name == "prepare_breach_notice":
-                # For mutation tools, we pass the raw input dict
-                output = await tool_func(request.input_data, context)
-            else:
-                tool_input = schema_class(**request.input_data)
-                output = await tool_func(tool_input, context)
+            tool_input = schema_class(**tool_request.input_data)
+            output = await tool_func(tool_input, context)
 
             # Redact output if needed
             if hasattr(output, "model_dump"):
@@ -273,41 +267,14 @@ def create_app() -> FastAPI:
             else:
                 output_dict = {"data": str(output)}
 
-            # For mutation tools, log pre/post state
-            if tool_name in policy_gateway.MUTATION_TOOLS:
-                # Log pre-state (input)
-                db.log_audit_event(
-                    correlation_id=correlation_id,
-                    event_type="mutation_pre_state",
-                    user_id=context.user_id,
-                    tenant_id=context.tenant_id,
-                    tool_name=tool_name,
-                    action="pre_execution",
-                    details={"input_state": request.input_data},
-                )
-
             redacted_output = policy_gateway.redact_output(output_dict, context, tool_name)
-
-            # For mutation tools, log post-state
-            if tool_name in policy_gateway.MUTATION_TOOLS:
-                db.log_audit_event(
-                    correlation_id=correlation_id,
-                    event_type="mutation_post_state",
-                    user_id=context.user_id,
-                    tenant_id=context.tenant_id,
-                    tool_name=tool_name,
-                    action="post_execution",
-                    details={"output_state": redacted_output},
-                )
-
             execution_time_ms = (time.time() - start_time) * 1000
 
-            # Log execution (with full state for mutation tools)
+            # Log execution
             db = get_db()
 
             # For mutation tools, log pre/post state
-            if tool_name in ["prepare_breach_notice"]:
-                # Log pre-state
+            if tool_name in policy_gateway.MUTATION_TOOLS:
                 db.log_audit_event(
                     correlation_id=correlation_id,
                     event_type="mutation_pre_state",
@@ -315,7 +282,7 @@ def create_app() -> FastAPI:
                     tenant_id=context.tenant_id,
                     tool_name=tool_name,
                     action="pre_execution",
-                    details={"input": request.input_data},
+                    details={"input": tool_request.input_data},
                 )
 
             db.log_tool_execution(
@@ -323,10 +290,10 @@ def create_app() -> FastAPI:
                 tool_name=tool_name,
                 user_id=context.user_id,
                 tenant_id=context.tenant_id,
-                input_data=request.input_data,
+                input_data=tool_request.input_data,
                 output_data=redacted_output,
                 execution_time_ms=execution_time_ms,
-                trace_id=getattr(request.state, "trace_id", None),
+                trace_id=getattr(http_request.state, "trace_id", None),
                 success=True,
             )
 
@@ -348,7 +315,7 @@ def create_app() -> FastAPI:
                 tool_name=tool_name,
                 output_data=redacted_output,
                 execution_time_ms=execution_time_ms,
-                trace_id=getattr(request.state, "trace_id", None),
+                trace_id=getattr(http_request.state, "trace_id", None),
             )
 
         except Exception as e:
@@ -362,10 +329,10 @@ def create_app() -> FastAPI:
                 tool_name=tool_name,
                 user_id=context.user_id,
                 tenant_id=context.tenant_id,
-                input_data=request.input_data,
+                input_data=tool_request.input_data,
                 output_data=None,
                 execution_time_ms=execution_time_ms,
-                trace_id=getattr(request.state, "trace_id", None),
+                trace_id=getattr(http_request.state, "trace_id", None),
                 success=False,
                 error_message=error_message,
             )
@@ -386,9 +353,6 @@ def create_app() -> FastAPI:
         role: str = Header(default="agent", alias="X-Role"),
     ):
         """Execute a LangGraph workflow."""
-        import json
-
-        correlation_id = request.state.correlation_id
         body = await request.json()
 
         # Build request context

@@ -2,8 +2,6 @@
 
 from typing import Any, Callable, Dict, Optional
 
-from mcp.schemas.base import RequestContext
-
 
 class ToolRegistry:
     """Registry for MCP tools."""

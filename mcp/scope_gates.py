@@ -19,7 +19,9 @@ def check_production_integrations() -> None:
 
 def check_hitl_ui() -> None:
     """Raise if HITL UI is attempted (not in MVP)."""
-    raise NotImplementedError("HITL UI dashboard is not available in MVP. Use CLI token generation.")
+    raise NotImplementedError(
+        "HITL UI dashboard is not available in MVP. Use CLI token generation."
+    )
 
 
 def check_feature_flag(feature: str) -> None:

@@ -1,11 +1,23 @@
 """SQLite database for MCP Server persistence."""
 
+import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from mcp.config import settings
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """JSON encoder that handles datetime objects."""
+
+    def default(self, obj):
+        """Encode datetime objects as ISO format strings."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class Database:
@@ -27,8 +39,7 @@ class Database:
             cursor = conn.cursor()
 
             # Tool execution logs
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tool_executions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     correlation_id TEXT NOT NULL,
@@ -43,12 +54,10 @@ class Database:
                     error_message TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """
-            )
+            """)
 
             # LangGraph workflow executions
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_executions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     correlation_id TEXT NOT NULL,
@@ -61,12 +70,10 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP
                 )
-            """
-            )
+            """)
 
             # Agent manifests
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agent_manifests (
                     agent_id TEXT PRIMARY KEY,
                     version TEXT NOT NULL,
@@ -79,12 +86,10 @@ class Database:
                     prompt_hash TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """
-            )
+            """)
 
             # Audit log
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     correlation_id TEXT NOT NULL,
@@ -97,8 +102,7 @@ class Database:
                     details TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """
-            )
+            """)
 
             conn.commit()
 
@@ -126,8 +130,6 @@ class Database:
         error_message: Optional[str] = None,
     ) -> None:
         """Log tool execution to database."""
-        import json
-
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -143,8 +145,8 @@ class Database:
                     tool_name,
                     user_id,
                     tenant_id,
-                    json.dumps(input_data),
-                    json.dumps(output_data) if output_data else None,
+                    json.dumps(input_data, cls=DateTimeEncoder),
+                    json.dumps(output_data, cls=DateTimeEncoder) if output_data else None,
                     execution_time_ms,
                     trace_id,
                     success,
@@ -165,8 +167,6 @@ class Database:
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Log audit event."""
-        import json
-
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -184,7 +184,7 @@ class Database:
                     tool_name,
                     action,
                     policy_result,
-                    json.dumps(details) if details else None,
+                    json.dumps(details, cls=DateTimeEncoder) if details else None,
                 ),
             )
             conn.commit()

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     mcp_api_version: str = "v1"
 
     # Authentication
-    bearer_token: str
+    bearer_token: str = "dev-token-insecure"  # Required in production via env
     role: str = "agent"  # agent or admin
 
     # Database

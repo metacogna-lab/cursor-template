@@ -30,7 +30,7 @@ class PolicyGateway:
         "archive_listing",
     ]
 
-    # Tools that are mutation/high-risk (Tier C)
+    # Mutation tools (for audit logging) - Tier C high-risk
     MUTATION_TOOLS: List[str] = [
         "prepare_breach_notice",
         "archive_listing",
@@ -97,7 +97,9 @@ class PolicyGateway:
             import re
 
             redacted = str(output)
-            redacted = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[EMAIL]", redacted)
+            redacted = re.sub(
+                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[EMAIL]", redacted
+            )
             # Redact phone numbers
             redacted = re.sub(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b", "[PHONE]", redacted)
 
