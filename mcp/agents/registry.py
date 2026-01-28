@@ -1,7 +1,7 @@
 """Agent registry for deployment registration."""
 
 import json
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from mcp.schemas.base import AgentManifest
 from mcp.storage import get_db

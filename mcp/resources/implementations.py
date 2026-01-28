@@ -81,9 +81,7 @@ async def get_property_feedback_resource(
     }
 
 
-async def get_ledger_summary_resource(
-    tenancy_id: str, context: RequestContext
-) -> Dict[str, Any]:
+async def get_ledger_summary_resource(tenancy_id: str, context: RequestContext) -> Dict[str, Any]:
     """
     Get ledger summary resource.
 
